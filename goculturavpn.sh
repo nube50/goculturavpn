@@ -1,6 +1,8 @@
 #!/bin/bash
 # ===============================
 #   CulturaVPN Manager GoProxy
+#   Autor: @thomasculturavpn
+#   Repo: github.com/nube50/goculturavpn
 # ===============================
 
 CONFIG_DIR="/etc/culturavpn"
