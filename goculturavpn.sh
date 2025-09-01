@@ -1,98 +1,65 @@
 #!/bin/bash
-# ========================================================
-# 🌐 CulturaVPN MÁNAGER GO PROXY
-# by @thomasculturavpn
-# ========================================================
+set -e
 
-BANNER="| CulturaVPN @thomasculturavpn |"
+echo "🔍 Detectando arquitectura..."
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)   GOARCH="amd64" ;;
+    aarch64)  GOARCH="arm64" ;;
+    *) echo "❌ Arquitectura $ARCH no soportada"; exit 1 ;;
+esac
+
+echo "📥 Descargando GoProxy para $GOARCH..."
+URL="https://github.com/snail007/goproxy/releases/download/v10.7/proxy-linux-$GOARCH.tar.gz"
+
+rm -f /tmp/proxy.tar.gz
+curl -L -o /tmp/proxy.tar.gz "$URL"
+
+echo "🗜 Verificando archivo..."
+file /tmp/proxy.tar.gz | grep -q 'gzip compressed data' || { echo "❌ Descarga fallida"; exit 1; }
+
+echo "📦 Extrayendo..."
+tar -xvzf /tmp/proxy.tar.gz -C /tmp
+
+echo "🚀 Instalando en /usr/local/bin..."
+mv /tmp/proxy /usr/local/bin/proxy
+chmod +x /usr/local/bin/proxy
+
+echo "✅ Verificando instalación..."
+/usr/local/bin/proxy -v || { echo "❌ Instalación fallida"; exit 1; }
+
+# ---- Alias permanente ----
+if ! grep -q "alias goculturavpn=" ~/.bashrc; then
+    echo "alias goculturavpn='/usr/local/bin/proxy'" >> ~/.bashrc
+    echo "✅ Alias permanente 'goculturavpn' añadido"
+else
+    echo "ℹ️ Alias 'goculturavpn' ya existe"
+fi
+
+# ---- Servicio systemd ----
 SERVICE_FILE="/etc/systemd/system/goproxy.service"
-
-# Detectar arquitectura automáticamente
-detect_arch() {
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64)   FILE="proxy-linux-amd64" ;;
-        aarch64)  FILE="proxy-linux-arm64" ;;
-        armv7l)   FILE="proxy-linux-arm" ;;
-        *) echo "❌ Arquitectura no soportada: $ARCH"; exit 1 ;;
-    esac
-    echo "$FILE"
-}
-
-install_goproxy() {
-    echo "🚀 Instalando dependencias..."
-    apt update -y
-    apt install -y curl
-
-    FILE=$(detect_arch)
-    URL="https://github.com/snail007/goproxy/releases/latest/download/$FILE"
-
-    echo "📥 Descargando GoProxy desde: $URL"
-    curl -L "$URL" -o /usr/local/bin/proxy
-
-    chmod +x /usr/local/bin/proxy
-
-    echo "✅ GoProxy instalado correctamente."
-    /usr/local/bin/proxy -v || echo "⚠️ No se pudo comprobar la versión."
-}
-
-configure_service() {
-    read -p "👉 Puerto de escucha (WS) [default 80]: " PORT_LISTEN
-    PORT_LISTEN=${PORT_LISTEN:-80}
-    read -p "👉 Puerto de redirección (TCP) [default 22]: " PORT_TARGET
-    PORT_TARGET=${PORT_TARGET:-22}
-
-    cat > $SERVICE_FILE <<EOF
+if [ ! -f "$SERVICE_FILE" ]; then
+cat <<EOF > $SERVICE_FILE
 [Unit]
 Description=GoProxy WebSocket Tunnel con Banner
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/proxy ws -p :$PORT_LISTEN -T tcp -P 127.0.0.1:$PORT_TARGET -H "X-Banner: $BANNER"
+ExecStart=/usr/local/bin/proxy ws -p :80 -T tcp -C "🚀 Bienvenido a CulturaVPN"
 Restart=always
 User=root
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
     systemctl daemon-reload
     systemctl enable goproxy
-    systemctl restart goproxy
+    echo "✅ Servicio systemd creado: goproxy"
+else
+    echo "ℹ️ Servicio systemd ya existe"
+fi
 
-    echo "✅ Servicio configurado y ejecutándose en puerto $PORT_LISTEN → $PORT_TARGET"
-    systemctl status goproxy --no-pager
-}
-
-uninstall_goproxy() {
-    systemctl stop goproxy
-    systemctl disable goproxy
-    rm -f $SERVICE_FILE
-    rm -f /usr/local/bin/proxy
-    systemctl daemon-reload
-    echo "✅ GoProxy desinstalado completamente."
-}
-
-menu() {
-    clear
-    echo "╔════════════════════════════════════════╗"
-    echo "║   🌐 CulturaVPN MÁNAGER GO PROXY       ║"
-    echo "║        by @thomasculturavpn            ║"
-    echo "╚════════════════════════════════════════╝"
-    echo
-    echo "1) Instalar GoProxy"
-    echo "2) Configurar y arrancar servicio"
-    echo "3) Desinstalar GoProxy"
-    echo "0) Salir"
-    echo
-    read -p "Selecciona una opción: " OPCION
-    case $OPCION in
-        1) install_goproxy ;;
-        2) configure_service ;;
-        3) uninstall_goproxy ;;
-        0) exit 0 ;;
-        *) echo "❌ Opción inválida" ;;
-    esac
-}
-
-menu
+echo "🎉 Instalación completa."
+echo "👉 Usa 'systemctl start goproxy' para iniciar"
+echo "👉 Usa 'systemctl status goproxy' para ver el estado"
+echo "👉 O ejecuta 'goculturavpn' manualmente"
