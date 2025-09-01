@@ -1,109 +1,114 @@
 #!/bin/bash
-# ===============================
-#   CulturaVPN Manager GoProxy
+# ==========================================
+#   CulturaVPN Manager - GoProxy
 #   Autor: @thomasculturavpn
-#   Repo: github.com/nube50/goculturavpn
-# ===============================
+# ==========================================
 
 CONFIG_DIR="/etc/culturavpn"
-CONFIG_FILE="$CONFIG_DIR/goproxy.env"
+ENV_FILE="$CONFIG_DIR/goproxy.env"
 SERVICE_FILE="/etc/systemd/system/goproxy.service"
 
-# Crear directorio y archivo de configuración si no existen
-mkdir -p $CONFIG_DIR
-if [ ! -f "$CONFIG_FILE" ]; then
-    cat <<EOF > "$CONFIG_FILE"
-# Configuración de GoProxy
-LISTEN_PORT=80
-REDIRECT_PORT=443
-BANNER="Bienvenido a CulturaVPN"
-EOF
-fi
+mkdir -p "$CONFIG_DIR"
 
-# Cargar configuración
-source "$CONFIG_FILE"
-
-# ===============================
-# Funciones
-# ===============================
-
+# Función para instalar/actualizar GoProxy
 instalar_goproxy() {
-    echo "📥 Instalando GoProxy..."
-    ARCH=$(uname -m)
-    if [[ "$ARCH" == "x86_64" ]]; then
-        URL="https://github.com/snail007/goproxy/releases/latest/download/proxy-linux-amd64.tar.gz"
-    elif [[ "$ARCH" == "aarch64" ]]; then
-        URL="https://github.com/snail007/goproxy/releases/latest/download/proxy-linux-arm64.tar.gz"
-    else
-        echo "❌ Arquitectura no soportada: $ARCH"
-        exit 1
-    fi
+    echo "📥 Instalando/Actualizando GoProxy..."
 
-    curl -L "$URL" -o /tmp/proxy.tar.gz
-    tar -xzf /tmp/proxy.tar.gz -C /tmp || { echo "❌ Error al extraer"; exit 1; }
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        aarch64|arm64)
+            URL="https://github.com/snail007/goproxy/releases/download/v11.6/proxy-linux-arm64.tar.gz"
+            ;;
+        x86_64|amd64)
+            URL="https://github.com/snail007/goproxy/releases/download/v11.6/proxy-linux-amd64.tar.gz"
+            ;;
+        *)
+            echo "❌ Arquitectura no soportada: $ARCH"
+            return
+            ;;
+    esac
+
+    curl -L "$URL" -o /tmp/proxy.tar.gz || { echo "❌ Error en descarga"; return; }
+
+    tar -xvzf /tmp/proxy.tar.gz -C /tmp || { echo "❌ Error al extraer"; return; }
+
     mv /tmp/proxy /usr/local/bin/proxy
     chmod +x /usr/local/bin/proxy
+    VERSION=$(/usr/local/bin/proxy --version 2>/dev/null | head -n1)
 
-    echo "✅ GoProxy instalado: $(/usr/local/bin/proxy --version 2>/dev/null)"
+    echo "✅ GoProxy instalado: $VERSION"
     read -p "⏎ Enter para volver al menú..."
 }
 
+# Configurar puertos
 configurar_puertos() {
-    read -p "🔌 Puerto de escucha WS (actual: $LISTEN_PORT): " NEW_LISTEN
-    read -p "↪️ Puerto de redirección TCP (actual: $REDIRECT_PORT): " NEW_REDIRECT
-
-    LISTEN_PORT=${NEW_LISTEN:-$LISTEN_PORT}
-    REDIRECT_PORT=${NEW_REDIRECT:-$REDIRECT_PORT}
-
-    cat <<EOF > "$CONFIG_FILE"
-LISTEN_PORT=$LISTEN_PORT
-REDIRECT_PORT=$REDIRECT_PORT
-BANNER="$BANNER"
+    echo "⚙️ Configurar puertos"
+    read -p "Puerto de escucha (WS): " WS_PORT
+    read -p "Puerto de redirección (TCP): " TCP_PORT
+    cat > "$ENV_FILE" <<EOF
+WS_PORT=$WS_PORT
+TCP_PORT=$TCP_PORT
+BANNER="Bienvenido a CulturaVPN"
 EOF
-
-    echo "✅ Configuración actualizada."
+    echo "✅ Guardado en $ENV_FILE"
     read -p "⏎ Enter para volver al menú..."
 }
 
+# Configurar banner
 configurar_banner() {
-    read -p "📝 Nuevo banner (actual: $BANNER): " NEW_BANNER
-    BANNER=${NEW_BANNER:-$BANNER}
-
-    cat <<EOF > "$CONFIG_FILE"
-LISTEN_PORT=$LISTEN_PORT
-REDIRECT_PORT=$REDIRECT_PORT
-BANNER="$BANNER"
-EOF
-
-    echo "✅ Banner actualizado."
+    echo "⚙️ Configurar banner"
+    read -p "Nuevo banner: " BANNER
+    if [ -f "$ENV_FILE" ]; then
+        sed -i "s|^BANNER=.*|BANNER=\"$BANNER\"|" "$ENV_FILE"
+    else
+        echo "BANNER=\"$BANNER\"" > "$ENV_FILE"
+    fi
+    echo "✅ Banner actualizado"
     read -p "⏎ Enter para volver al menú..."
 }
 
-iniciar_servicio() {
-    cat <<EOF > $SERVICE_FILE
+# Crear servicio systemd
+crear_servicio() {
+    if [ ! -f "$ENV_FILE" ]; then
+        echo "❌ Configura primero los puertos con opción 2"
+        return
+    fi
+    source "$ENV_FILE"
+    cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=GoProxy WebSocket Tunnel con Banner
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/proxy ws -p :$LISTEN_PORT -T tcp://127.0.0.1:$REDIRECT_PORT --wstls --wsskipverify --wsbanner "$BANNER"
+ExecStart=/usr/local/bin/proxy ws -p :$WS_PORT -T tcp -P 127.0.0.1:$TCP_PORT --ttl 7200 --banner "\$BANNER"
 Restart=always
-EnvironmentFile=$CONFIG_FILE
+EnvironmentFile=$ENV_FILE
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    systemctl daemon-reexec
-    systemctl enable --now goproxy
-    echo "🚀 GoProxy iniciado en puerto $LISTEN_PORT → $REDIRECT_PORT"
-    read -p "⏎ Enter para volver al menú..."
+    systemctl daemon-reload
 }
 
-# ===============================
-# Menú principal
-# ===============================
+iniciar_servicio() { crear_servicio; systemctl start goproxy; echo "✅ Servicio iniciado"; read -p "⏎"; }
+detener_servicio() { systemctl stop goproxy; echo "🛑 Servicio detenido"; read -p "⏎"; }
+reiniciar_servicio() { systemctl restart goproxy; echo "🔄 Servicio reiniciado"; read -p "⏎"; }
+estado_servicio() { systemctl status goproxy --no-pager; read -p "⏎"; }
+logs_servicio() { journalctl -u goproxy -n 20 --no-pager; read -p "⏎"; }
+logs_vivo() { journalctl -u goproxy -f; }
+habilitar_arranque() { systemctl enable goproxy; echo "✅ Servicio habilitado al arranque"; read -p "⏎"; }
+deshabilitar_arranque() { systemctl disable goproxy; echo "🛑 Servicio deshabilitado al arranque"; read -p "⏎"; }
+probar_http() { curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Host: localhost" -H "Origin: http://localhost" http://127.0.0.1:$(grep WS_PORT $ENV_FILE | cut -d= -f2) || echo "❌ Falló prueba"; read -p "⏎"; }
+desinstalar_todo() {
+    systemctl stop goproxy 2>/dev/null
+    systemctl disable goproxy 2>/dev/null
+    rm -f /usr/local/bin/proxy $SERVICE_FILE $ENV_FILE
+    systemctl daemon-reload
+    echo "🗑 GoProxy eliminado"
+    read -p "⏎"
+}
 
+# Menú principal
 while true; do
     clear
     echo "==============================="
@@ -124,25 +129,23 @@ while true; do
     echo "12) Probar HTTP 101 (handshake WS)"
     echo "13) Desinstalar TODO"
     echo "0) Salir"
-    echo
-    read -p "Selecciona una opción: " OPCION
-
-    case $OPCION in
+    echo ""
+    read -p "Selecciona una opción: " opcion
+    case $opcion in
         1) instalar_goproxy ;;
         2) configurar_puertos ;;
         3) configurar_banner ;;
         4) iniciar_servicio ;;
-        5) systemctl stop goproxy ;;
-        6) systemctl restart goproxy ;;
-        7) systemctl status goproxy ;;
-        8) journalctl -u goproxy --no-pager -n 30 ;;
-        9) journalctl -u goproxy -f ;;
-        10) systemctl enable goproxy ;;
-        11) systemctl disable goproxy ;;
-        12) curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" http://127.0.0.1:$LISTEN_PORT/ ;;
-        13) systemctl stop goproxy; systemctl disable goproxy; rm -f $SERVICE_FILE; rm -rf $CONFIG_DIR; rm -f /usr/local/bin/proxy; echo "❌ GoProxy eliminado." ;;
-        0) exit ;;
-        *) echo "❌ Opción inválida" ;;
+        5) detener_servicio ;;
+        6) reiniciar_servicio ;;
+        7) estado_servicio ;;
+        8) logs_servicio ;;
+        9) logs_vivo ;;
+        10) habilitar_arranque ;;
+        11) deshabilitar_arranque ;;
+        12) probar_http ;;
+        13) desinstalar_todo ;;
+        0) exit 0 ;;
+        *) echo "❌ Opción inválida"; sleep 1 ;;
     esac
-    read -p "⏎ Enter para continuar..."
 done
