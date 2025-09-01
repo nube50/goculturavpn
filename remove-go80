@@ -1,0 +1,23 @@
+#!/bin/bash
+set -e
+
+SERVICE="goproxy"
+BINARY="/usr/local/bin/goproxy"
+SERVICE_FILE="/etc/systemd/system/${SERVICE}.service"
+
+echo "[*] Deteniendo servicio..."
+systemctl stop $SERVICE || true
+
+echo "[*] Deshabilitando servicio..."
+systemctl disable $SERVICE || true
+
+echo "[*] Eliminando archivos..."
+rm -f "$BINARY"
+rm -f "$SERVICE_FILE"
+
+echo "[*] Recargando systemd..."
+systemctl daemon-reload
+systemctl reset-failed
+
+echo "[✔] $SERVICE desinstalado correctamente."
+
